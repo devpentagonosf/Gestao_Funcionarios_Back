@@ -14,7 +14,7 @@ console.log('Environment Variables:', {
 
 const app = express();
 
-const allowedOrigins = ['http://localhost:5173', 'https://gestao.pentagonosf.com.br'];
+const allowedOrigins = ['http://localhost:5173', 'https://funcionarios.pentagonosf.com.br'];
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.includes(origin)) {
