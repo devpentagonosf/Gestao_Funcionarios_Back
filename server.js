@@ -33,7 +33,7 @@ connectToMongoDB(mongoUri);
 
 app.use('/', apiRoutes);
 
-app.post('/', (req, res) => {
+app.get('/', (req, res) => {
   res.status(200).send('API READY');
 });
 
