@@ -2,34 +2,140 @@ import puppeteer from 'puppeteer';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import csvParser from 'csv-parser';
+import mongoose from 'mongoose';
+import dotenv from 'dotenv';
+import RamalModel from '../models/ramalModel.js';
+
+dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 const logFilePath = path.resolve(__dirname, 'relatorio_logs.txt');
 const log = (message) => {
     const now = new Date();
     const timestamp = `${String(now.getDate()).padStart(2, '0')}-${String(now.getMonth() + 1).padStart(2, '0')}-${now.getFullYear()} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
     fs.appendFileSync(logFilePath, `[${timestamp}] ${message}\n`);
+    console.log(`[${timestamp}] ${message}`);
 };
 
 const expectedHeader = `"Data","Origem","Grupo de Chamada","Destino","Canal de Origem","Protocolo","Canal de Destino","Estado","Duração","UniqueID","User Field","DID","CEL"`;
+
+const mongoURI = process.env.MONGO_URI;
+
+if (!mongoURI) {
+    console.error('Erro: MONGO_URI não definido no arquivo .env');
+    process.exit(1);
+}
+
+const saveToDatabase = async (data, date) => {
+    try {
+        console.log('Conectando ao MongoDB...');
+        await mongoose.connect(mongoURI, { useNewUrlParser: true, useUnifiedTopology: true });
+        console.log('Conexão com MongoDB estabelecida.');
+
+        const existingRecords = await RamalModel.find({ 'registros.data': date });
+        console.log(`Registros existentes para a data ${date}: ${existingRecords.length}`);
+
+        if (existingRecords.length > 0) {
+            console.log(`Removendo registros existentes para a data ${date}...`);
+            await RamalModel.updateMany({}, { $pull: { registros: { data: date } } });
+        }
+
+        for (const ramal in data) {
+            const { tempo_ligacao, qtd_ligacoes } = data[ramal];
+            const existingRamal = await RamalModel.findOne({ ramal });
+
+            if (existingRamal) {
+                console.log(`Atualizando ramal ${ramal}...`);
+                existingRamal.registros.push({ data: date, qtd_ligacoes, tempo_ligacao });
+                await existingRamal.save();
+            } else {
+                console.log(`Criando novo registro para ramal ${ramal}...`);
+                const newRamal = new RamalModel({
+                    ramal,
+                    registros: [{ data: date, qtd_ligacoes, tempo_ligacao }],
+                });
+                await newRamal.save();
+            }
+        }
+
+        console.log('Dados salvos no MongoDB com sucesso.');
+    } catch (error) {
+        console.error('Erro ao salvar no MongoDB:', error.message);
+    } finally {
+        await mongoose.disconnect();
+        console.log('Conexão com MongoDB encerrada.');
+    }
+};
+
+const processCSV = (inputFilePath, outputDir) => {
+    console.log('Iniciando processamento do arquivo CSV...');
+    const results = {};
+    const now = new Date();
+    const formattedDate = `${String(now.getDate()).padStart(2, '0')}-${String(now.getMonth() + 1).padStart(2, '0')}-${now.getFullYear()}`;
+    const outputFilePath = path.join(outputDir, `relatorio_final_${formattedDate}.csv`);
+
+    fs.mkdirSync(outputDir, { recursive: true });
+
+    fs.createReadStream(inputFilePath)
+        .pipe(csvParser({ separator: ',' }))
+        .on('data', (row) => {
+            const ramal = row['Origem'];
+            const duracao = row['Duração'];
+
+            if (!results[ramal]) {
+                results[ramal] = { tempo_ligacao: 0, qtd_ligacoes: 0 };
+            }
+
+            let totalSegundos = 0;
+
+            if (duracao.includes('m')) {
+                const [minutos, segundos] = duracao.split('m').map(part => part.trim());
+                totalSegundos += parseInt(minutos) * 60;
+                if (segundos) {
+                    totalSegundos += parseInt(segundos.replace('s', '').trim());
+                }
+            } else if (duracao.includes('s')) {
+                totalSegundos += parseInt(duracao.replace('s', '').trim());
+            }
+
+            results[ramal].tempo_ligacao += totalSegundos / 60;
+            results[ramal].qtd_ligacoes += 1;
+        })
+        .on('end', async () => {
+            console.log('Processamento do CSV concluído.');
+            const outputData = ['Ramal;Tempo_Chamadas;QTD_Chamadas;Data'];
+            for (const ramal in results) {
+                const { tempo_ligacao, qtd_ligacoes } = results[ramal];
+                outputData.push(`${ramal};${tempo_ligacao.toFixed(2)};${qtd_ligacoes};${formattedDate}`);
+            }
+            fs.writeFileSync(outputFilePath, outputData.join('\n'), 'utf8');
+            log(`Relatório tratado salvo como: ${outputFilePath}`);
+
+            await saveToDatabase(results, formattedDate);
+        })
+        .on('error', (error) => {
+            log(`Erro ao processar o CSV: ${error.message}`);
+        });
+};
 
 (async () => {
     let attempt = 0;
     let success = false;
 
+    const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
     while (attempt < 3 && !success) {
         attempt++;
         log(`Iniciando tentativa ${attempt} para baixar o relatório.`);
 
-        const browser = await puppeteer.launch({ headless: false, args: ['--start-maximized'] });
+        const browser = await puppeteer.launch({ headless: false, args: ['--start-maximized'] }); // Changed headless to false and added --start-maximized
         const page = await browser.newPage();
 
         const [width, height] = [1920, 1080];
-        await page.setViewport({ width, height });
+        await page.setViewport({ width, height }); // Set the viewport to maximize the browser window
 
         const downloadPath = path.resolve(__dirname, 'Relatorios_CSV');
         fs.mkdirSync(downloadPath, { recursive: true });
@@ -40,35 +146,23 @@ const expectedHeader = `"Data","Origem","Grupo de Chamada","Destino","Canal de O
         });
 
         try {
-            await page.goto('https://pentagonosfserver.myddns.me:4006/index.php', {
-                waitUntil: 'networkidle2',
-            });
-            await wait(5000);
+            log('Acessando página de login...');
+            await page.goto('https://pentagonosfserver.myddns.me:4006/index.php', { waitUntil: 'networkidle2' });
 
-            await page.waitForSelector('#input_user');
+            log('Preenchendo credenciais...');
             await page.type('#input_user', 'admin');
-
-            await page.waitForSelector('input[name="input_pass"]');
             await page.type('input[name="input_pass"]', 'Pentagono@2025');
-
-            await page.waitForSelector('button[name="submit_login"]');
             await page.click('button[name="submit_login"]');
-
             await page.waitForNavigation({ waitUntil: 'networkidle2' });
-            await wait(5000);
+
             log('Login realizado com sucesso.');
 
-            await page.goto('https://pentagonosfserver.myddns.me:4006/index.php?menu=cdrreport', {
-                waitUntil: 'networkidle2',
-            });
-            await wait(5000);
-            log('Acessou o link do relatório com sucesso.');
+            log('Acessando página de relatórios...');
+            await page.goto('https://pentagonosfserver.myddns.me:4006/index.php?menu=cdrreport', { waitUntil: 'networkidle2' });
 
-            await page.waitForSelector('button.buttons-csv');
+            log('Iniciando download do relatório CSV...');
             await page.click('button.buttons-csv');
-            log('Iniciando download do relatório CSV.');
-
-            await wait(10000);
+            await delay(10000); // Replaced page.waitForTimeout with delay
 
             const files = fs.readdirSync(downloadPath);
             const csvFile = files.find(file => file.endsWith('.csv'));
@@ -86,6 +180,9 @@ const expectedHeader = `"Data","Origem","Grupo de Chamada","Destino","Canal de O
                 if (fileHeader === expectedHeader) {
                     log('Cabeçalho do relatório está correto. Processo concluído com sucesso.');
                     success = true;
+
+                    const outputDir = path.resolve(__dirname, 'Tratados_CSV');
+                    processCSV(newFilePath, outputDir);
                 } else {
                     log('Cabeçalho do relatório está incorreto. Tentando novamente.');
                 }
