@@ -7,6 +7,7 @@ import { resetPassword } from '../controllers/resetPasswordController.js';
 import { createUser } from '../controllers/cadastroUsuario.js';
 import { updateUserStatus } from '../controllers/statusUser.js';
 import { updateUserInfo } from '../controllers/editUser.js';
+import { countTabulations } from '../controllers/contagemTabulacao.js';
 
 const router = express.Router();
 
@@ -17,5 +18,10 @@ router.post('/reset-password', authenticateToken, resetPassword);
 router.post('/create-user', createUser);
 router.post('/update-user-status', authenticateToken, updateUserStatus);
 router.put('/update-user-info', authenticateToken, updateUserInfo);
+
+router.get('/count-tabulations', async (req, res) => {
+  await countTabulations();
+  res.status(200).send('Tabulações processadas. Verifique o console para os resultados.');
+});
 
 export default router;
