@@ -1,2 +1,5 @@
 node_modules
 *.txt
+*.csv
+*.xls
+*.xlsx

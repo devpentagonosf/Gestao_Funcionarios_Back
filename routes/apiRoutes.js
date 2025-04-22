@@ -8,6 +8,8 @@ import { createUser } from '../controllers/cadastroUsuario.js';
 import { updateUserStatus } from '../controllers/statusUser.js';
 import { updateUserInfo } from '../controllers/editUser.js';
 import { countTabulations } from '../controllers/contagemTabulacao.js';
+import { contagemRamal } from '../controllers/contagemRamal.js';
+import { getUnionDesempenho } from '../controllers/UnionDesempenho.js';
 
 const router = express.Router();
 
@@ -22,6 +24,15 @@ router.put('/update-user-info', authenticateToken, updateUserInfo);
 router.get('/count-tabulations', async (req, res) => {
   await countTabulations();
   res.status(200).send('Tabulações processadas. Verifique o console para os resultados.');
+});
+
+router.get('/count-ramal', async (req, res) => {
+  await contagemRamal();
+  res.status(200).send('Contagem de ramais processada. Verifique o console para os resultados.');
+});
+
+router.get('/union-desempenho', async (req, res) => {
+  await getUnionDesempenho(req, res);
 });
 
 export default router;
