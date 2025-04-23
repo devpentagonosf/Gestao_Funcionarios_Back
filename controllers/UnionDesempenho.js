@@ -8,6 +8,16 @@ const contagemRamalCollection = 'contagemramal';
 
 export const getUnionDesempenho = async (req, res) => {
   try {
+    // Verifica se o cliente MongoDB está conectado
+    if (!mongoose.connection.readyState) {
+      console.log('MongoDB client is not connected. Attempting to reconnect...');
+      await mongoose.connect(process.env.MONGO_URI, {
+        useNewUrlParser: true,
+        useUnifiedTopology: true,
+      });
+      console.log('Reconnected to MongoDB');
+    }
+
     const db = mongoose.connection.db;
 
     const contagemTabs = await db.collection(contagemTabsCollection).find().toArray();

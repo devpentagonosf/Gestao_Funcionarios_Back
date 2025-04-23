@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 import csvParser from 'csv-parser';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
-import RamalModel from '../models/ramalModel.js';
+import RamalModel from './ramalModel.js';
 
 dotenv.config();
 
@@ -19,6 +19,20 @@ const log = (message) => {
     fs.appendFileSync(logFilePath, `[${timestamp}] ${message}\n`);
     console.log(`[${timestamp}] ${message}`);
 };
+
+// Sobrescreve o log no início da execução
+fs.writeFileSync(logFilePath, ''); // Limpa o conteúdo do arquivo de log
+
+// Adicione um log para capturar erros gerais
+process.on('uncaughtException', (err) => {
+    fs.appendFileSync(logFilePath, `[ERRO] Uncaught Exception: ${err.message}\n`);
+    console.error('Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    fs.appendFileSync(logFilePath, `[ERRO] Unhandled Rejection: ${reason}\n`);
+    console.error('Unhandled Rejection:', reason);
+});
 
 const expectedHeader = `"Data","Origem","Grupo de Chamada","Destino","Canal de Origem","Protocolo","Canal de Destino","Estado","Duração","UniqueID","User Field","DID","CEL"`;
 
@@ -74,7 +88,7 @@ const processCSV = (inputFilePath, outputDir) => {
     console.log('Iniciando processamento do arquivo CSV...');
     const results = {};
     const now = new Date();
-    const formattedDate = `${String(now.getDate()).padStart(2, '0')}-${String(now.getMonth() + 1).padStart(2, '0')}-${now.getFullYear()}`;
+    const formattedDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`; // Ajustado para YYYY-MM-DD
     const outputFilePath = path.join(outputDir, `relatorio_final_${formattedDate}.csv`);
 
     fs.mkdirSync(outputDir, { recursive: true });
@@ -127,11 +141,14 @@ const processCSV = (inputFilePath, outputDir) => {
 
     const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-    while (attempt < 3 && !success) {
+    while (attempt < 5 && !success) { // Alterado para 5 tentativas
         attempt++;
         log(`Iniciando tentativa ${attempt} para baixar o relatório.`);
 
-        const browser = await puppeteer.launch({ headless: false, args: ['--start-maximized'] }); // Changed headless to false and added --start-maximized
+        const browser = await puppeteer.launch({ 
+            headless: true, 
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'] // Adicionado --disable-gpu
+        });
         const page = await browser.newPage();
 
         const [width, height] = [1920, 1080];
@@ -153,9 +170,18 @@ const processCSV = (inputFilePath, outputDir) => {
             await page.type('#input_user', 'admin');
             await page.type('input[name="input_pass"]', 'Pentagono@2025');
             await page.click('button[name="submit_login"]');
-            await page.waitForNavigation({ waitUntil: 'networkidle2' });
 
-            log('Login realizado com sucesso.');
+            // Aguarda 10 segundos antes de atualizar a página
+            log('Aguardando 10 segundos antes de atualizar a página...');
+            await delay(10000);
+
+            // Atualiza a página
+            log('Atualizando a página...');
+            await page.reload({ waitUntil: 'networkidle2' });
+
+            // Aguarda 5 segundos antes de acessar a URL dos relatórios
+            log('Aguardando 5 segundos antes de acessar a página de relatórios...');
+            await delay(5000);
 
             log('Acessando página de relatórios...');
             await page.goto('https://pentagonosfserver.myddns.me:4006/index.php?menu=cdrreport', { waitUntil: 'networkidle2' });
@@ -197,6 +223,6 @@ const processCSV = (inputFilePath, outputDir) => {
     }
 
     if (!success) {
-        log('Falha após 3 tentativas. O cabeçalho do relatório não corresponde ao esperado.');
+        log('Falha após 5 tentativas. O cabeçalho do relatório não corresponde ao esperado.');
     }
 })();

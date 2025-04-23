@@ -7,13 +7,20 @@ const contagemRamalModel = async (dbName) => {
 
   const registros = await dadosIssabelCollection.find({}).toArray();
 
+  if (registros.length === 0) {
+    console.log('Nenhum registro encontrado na coleção dados_issabel.');
+    return;
+  }
+
+  console.log(`Processando ${registros.length} registros da coleção dados_issabel.`);
+
   const resultados = registros.map((registro) => {
     const { ramal, registros } = registro;
     const agrupados = {};
 
     registros.forEach(({ data, qtd_ligacoes, tempo_ligacao }) => {
-      const [dia, mes, ano] = data.split('-');
-      const mes_ano = `${mes}-${ano}`; // Alterado para mes_ano
+      const [ano, mes, dia] = data.split('-'); // Corrigido para ano, mes, dia
+      const mes_ano = `${mes}-${ano}`; // Correto agrupamento por mes-ano
 
       if (!agrupados[mes_ano]) {
         agrupados[mes_ano] = { qtd_ligacoes: 0, tempo_ligacao: 0 };
@@ -30,18 +37,27 @@ const contagemRamalModel = async (dbName) => {
     for (const [mes_ano, valores] of Object.entries(dados)) {
       const { qtd_ligacoes, tempo_ligacao } = valores;
 
+      console.log(`Atualizando ramal: ${ramal}, mês/ano: ${mes_ano}, ligações: ${qtd_ligacoes}, tempo: ${tempo_ligacao}`);
+
       // Atualizar ou inserir os valores na nova coleção contagemramal
-      await contagemRamalCollection.updateOne(
+      const result = await contagemRamalCollection.updateOne(
         { ramal, mes_ano }, // Filtro para encontrar o registro
         {
-          $setOnInsert: { ramal, mes_ano }, // Inserir apenas se não existir
-          $inc: { qtd_ligacoes, tempo_ligacao }, // Incrementar os valores existentes
+          $set: { // Substituir os valores diretamente
+            ramal,
+            mes_ano,
+            qtd_ligacoes,
+            tempo_ligacao,
+          },
         },
         { upsert: true } // Insere se não encontrar
       );
+
+      console.log(`Resultado da atualização: ${JSON.stringify(result)}`);
     }
   }
 
+  console.log('Processamento concluído.');
   return resultados;
 };
 
